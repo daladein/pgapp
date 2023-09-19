@@ -10,6 +10,7 @@
 
 -export([squery/1, squery/2, squery/3,
          equery/2, equery/3, equery/4,
+         batch/2, batch/3, batch/4,
          with_transaction/2, with_transaction/3]).
 
 -export([start_link/1]).
@@ -67,6 +68,26 @@ equery(PoolName, Sql, Params, Timeout) ->
                                                    Timeout)
                            end, Timeout).
 
+batch(Batch, Params) ->
+case get(?STATE_VAR) of
+    undefined ->
+        batch(epgsql_pool, Batch, Params);
+    Conn ->
+        batch(Conn, Batch, Params)
+end.
+
+batch(PoolName, Batch, Params) when is_atom(PoolName) ->
+    batch(PoolName, Batch, Params, ?TIMEOUT);
+batch(Batch, Params, Timeout) ->
+    batch(epgsql_pool, Batch, Params, Timeout).
+
+batch(PoolName, Batch, Params, Timeout) ->
+    middle_man_transaction(PoolName,
+                            fun (W) ->
+                                    gen_server:call(W, {batch, Batch, Params},
+                                                    Timeout)
+                            end, Timeout).
+
 with_transaction(PoolName, Fun) ->
     with_transaction(PoolName, Fun, ?TIMEOUT).
 
@@ -110,6 +131,16 @@ handle_call({squery, Sql}, _From,
 handle_call({equery, Sql, Params}, _From,
             #state{conn = Conn} = State) ->
     {reply, epgsql:equery(Conn, Sql, Params), State};
+handle_call({parse, Name, Sql, Params}, _From,
+            #state{conn = Conn} = State) ->
+    {reply, epgsql:parse(Conn, Name, Sql, Params), State};
+handle_call({batch, Batch, Params}, _From,
+            #state{conn = Conn} = State) ->
+    {reply, process_batch(Batch, Params, Conn), State};
+handle_call(cancel, _From, #state{conn = C} = State) ->
+    epgsql:cancel(C),
+    {reply, ok, State};
+
 handle_call({transaction, Fun}, _From,
             #state{conn = Conn} = State) ->
     put(?STATE_VAR, Conn),
@@ -179,3 +210,34 @@ calculate_delay(Delay) when (Delay * 2) >= ?MAXIMUM_DELAY ->
     ?MAXIMUM_DELAY;
 calculate_delay(Delay) ->
     Delay * 2.
+
+process_batch(Batch, _Params, Conn) ->
+    %% Extract unique statemnts
+    Stmts = lists:usort([X || {X, _} <- Batch]),
+    error_logger:info_msg("Stmts : ~p~n", [Stmts]),
+    %% CHeck cache and parse if needs be, updating the cache
+    NSC =
+        lists:foldl(
+            fun(X, SC1) ->
+                    case dict:find(X, SC1) of
+                        {ok, _V} -> SC1;
+                        _ ->
+                            StmtName = base64:encode_to_string(crypto:strong_rand_bytes(16)),
+                            case epgsql:parse(Conn, StmtName, X, []) of
+                                {ok, S} ->
+                                    dict:store(X, {S, StmtName}, SC1);
+                                E -> io:format("Parsing gave ~p~n", [E]),
+                                    SC1
+                            end
+                    end
+            end, dict:new(), Stmts),
+    error_logger:info_msg("NSC : ~p~n", [NSC]),
+    %% Map statements into the parsed variants
+    NewBatch = lists:map(fun({S, Y}) -> {element(1, dict:fetch(S, NSC)), Y} end, Batch),
+    error_logger:info_msg("NewBatch : ~p~n", [NewBatch]),
+    %% Process the batch
+    R = epgsql:execute_batch(Conn, NewBatch),
+    error_logger:info_msg("R : ~p~n", [R]),
+    lists:map(fun({_Stmt, {_, SName}}) -> epgsql:close(Conn, statement, SName) end, dict:to_list(NSC)),
+    erlang:garbage_collect(self()),
+    R.

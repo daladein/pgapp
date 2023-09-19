@@ -12,6 +12,7 @@
 -export([connect/1, connect/2,
          equery/2, equery/3, equery/4,
          squery/1, squery/2, squery/3,
+         batch/2, batch/3, batch/4,
          with_transaction/1, with_transaction/2, with_transaction/3]).
 
 %%%===================================================================
@@ -80,6 +81,31 @@ squery(Sql, Timeout) ->
                [epgsql:reply(epgsql:squery_row())] | {error, Reason :: any()}.
 squery(PoolName, Sql, Timeout) ->
     pgapp_worker:squery(PoolName, Sql, Timeout).
+
+-spec batch(Sql    :: epgsql:sql_query(),
+    Params :: list(epgsql:bind_param()))
+    -> epgsql:reply(epgsql:equery_row()) | {error, Reason :: any()}.
+batch(Sql, Params) ->
+    pgapp_worker:batch(Sql, Params).
+
+-spec batch(Sql     :: epgsql:sql_query(),
+    Params  :: list(epgsql:bind_param()),
+    Timeout :: atom() | integer())
+   -> epgsql:reply(epgsql:equery_row()) | {error, Reason :: any()};
+   (PoolName :: atom(),
+    Sql::epgsql:sql_query(),
+    Params   :: list(epgsql:bind_param()))
+   -> epgsql:reply(epgsql:equery_row()) | {error, Reason :: any()}.
+batch(P1, P2, P3) ->
+    pgapp_worker:batch(P1, P2, P3).
+
+-spec batch(PoolName :: atom(),
+    Batch::list(epgsql:sql_query()),
+    Params   :: list(epgsql:bind_param()),
+    Timeout  :: atom() | integer())
+   -> epgsql:reply(epgsql:equery_row()) | {error, Reason :: any()}.
+batch(PoolName, Batch, Params, Timeout) ->
+    pgapp_worker:batch(PoolName, Batch, Params, Timeout).
 
 -spec with_transaction(Function :: fun(() -> Reply))
                       -> Reply | {rollback | error, any()} when Reply :: any().
