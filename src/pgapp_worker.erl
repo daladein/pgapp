@@ -214,7 +214,6 @@ calculate_delay(Delay) ->
 process_batch(Batch, _Params, Conn) ->
     %% Extract unique statemnts
     Stmts = lists:usort([X || {X, _} <- Batch]),
-    error_logger:info_msg("Stmts : ~p~n", [Stmts]),
     %% CHeck cache and parse if needs be, updating the cache
     NSC =
         lists:foldl(
@@ -226,18 +225,16 @@ process_batch(Batch, _Params, Conn) ->
                             case epgsql:parse(Conn, StmtName, X, []) of
                                 {ok, S} ->
                                     dict:store(X, {S, StmtName}, SC1);
-                                E -> io:format("Parsing gave ~p~n", [E]),
+                                E -> 
+                                    error_logger:error_msg("Parsing gave ~p~n", [E]),
                                     SC1
                             end
                     end
             end, dict:new(), Stmts),
-    error_logger:info_msg("NSC : ~p~n", [NSC]),
     %% Map statements into the parsed variants
     NewBatch = lists:map(fun({S, Y}) -> {element(1, dict:fetch(S, NSC)), Y} end, Batch),
-    error_logger:info_msg("NewBatch : ~p~n", [NewBatch]),
     %% Process the batch
     R = epgsql:execute_batch(Conn, NewBatch),
-    error_logger:info_msg("R : ~p~n", [R]),
     lists:map(fun({_Stmt, {_, SName}}) -> epgsql:close(Conn, statement, SName) end, dict:to_list(NSC)),
     erlang:garbage_collect(self()),
     R.
