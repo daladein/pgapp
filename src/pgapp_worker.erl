@@ -73,7 +73,7 @@ case get(?STATE_VAR) of
     undefined ->
         batch(epgsql_pool, Batch, Params);
     Conn ->
-        batch(Conn, Batch, Params)
+        process_batch(Batch, Params, Conn)
 end.
 
 batch(PoolName, Batch, Params) when is_atom(PoolName) ->
