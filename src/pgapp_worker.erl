@@ -10,7 +10,7 @@
 
 -export([squery/1, squery/2, squery/3,
          equery/2, equery/3, equery/4,
-         batch/2, batch/3, batch/4,
+         batch/1, batch/2, batch/3,
          with_transaction/2, with_transaction/3]).
 
 -export([start_link/1]).
@@ -68,23 +68,23 @@ equery(PoolName, Sql, Params, Timeout) ->
                                                    Timeout)
                            end, Timeout).
 
-batch(Batch, Params) ->
+batch(Batch) ->
 case get(?STATE_VAR) of
     undefined ->
-        batch(epgsql_pool, Batch, Params);
+        batch(epgsql_pool, Batch);
     Conn ->
-        process_batch(Batch, Params, Conn)
+        process_batch(Conn, Batch)
 end.
 
-batch(PoolName, Batch, Params) when is_atom(PoolName) ->
-    batch(PoolName, Batch, Params, ?TIMEOUT);
-batch(Batch, Params, Timeout) ->
-    batch(epgsql_pool, Batch, Params, Timeout).
+batch(PoolName, Batch) when is_atom(PoolName) ->
+    batch(PoolName, Batch, ?TIMEOUT);
+batch(Batch, Timeout) ->
+    batch(epgsql_pool, Batch, Timeout).
 
-batch(PoolName, Batch, Params, Timeout) ->
+batch(PoolName, Batch, Timeout) ->
     middle_man_transaction(PoolName,
                             fun (W) ->
-                                    gen_server:call(W, {batch, Batch, Params},
+                                    gen_server:call(W, {batch, Batch},
                                                     Timeout)
                             end, Timeout).
 
@@ -134,9 +134,9 @@ handle_call({equery, Sql, Params}, _From,
 handle_call({parse, Name, Sql, Params}, _From,
             #state{conn = Conn} = State) ->
     {reply, epgsql:parse(Conn, Name, Sql, Params), State};
-handle_call({batch, Batch, Params}, _From,
+handle_call({batch, Batch}, _From,
             #state{conn = Conn} = State) ->
-    {reply, process_batch(Batch, Params, Conn), State};
+    {reply, process_batch(Conn, Batch), State};
 handle_call(cancel, _From, #state{conn = C} = State) ->
     epgsql:cancel(C),
     {reply, ok, State};
@@ -211,7 +211,7 @@ calculate_delay(Delay) when (Delay * 2) >= ?MAXIMUM_DELAY ->
 calculate_delay(Delay) ->
     Delay * 2.
 
-process_batch(Batch, _Params, Conn) ->
+process_batch(Conn, Batch) ->
     %% Extract unique statemnts
     Stmts = lists:usort([X || {X, _} <- Batch]),
     %% CHeck cache and parse if needs be, updating the cache
